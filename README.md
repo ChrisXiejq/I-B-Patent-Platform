@@ -54,13 +54,14 @@ mvn spring-boot:run
 ### 3. 模型层（LLM base）
 ```bash
 cd "LLM base"
+conda env create -f env/environment.yml
 pip install -r env/requirements.txt
-# 数据入库（如PDF/专利数据）
+# 数据入库
 python rag/build_vector_db.py
-# 启动gRPC服务
+# 启动MCP Server
+python agent/mcp_server.py
+# 启动Agent Server
 python agent_server.py
-# 或启动MCP Agent
-python agent/ib_agent.py agent/mcp_server.py
 ```
 
 ## 主要功能
@@ -77,10 +78,3 @@ python agent/ib_agent.py agent/mcp_server.py
 - 支持MCP协议，便于多Agent/多工具协作
 - 可扩展多模态（语音/图像）与多租户/多院区部署
 - 代码结构清晰，便于二次开发与定制
-
-## 贡献与开发
-
-欢迎提交PR、Issue，或联系作者协作。
-
----
-如需详细开发文档、API说明或部署方案，请见各子目录README或联系维护者。
