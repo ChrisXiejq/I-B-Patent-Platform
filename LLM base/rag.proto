@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+service RagService {
+  rpc GetRagAnswer (RagRequest) returns (RagResponse);
+  rpc GetPatentInfo (PatentInfoRequest) returns (PatentInfoResponse);
+  rpc GetEnterpriseInterest (EnterpriseInterestRequest) returns (EnterpriseInterestResponse);
+}
+
+message RagRequest {
+  string user_query = 1;
+  string patent_no = 2;
+}
+
+message RagResponse {
+  string answer = 1;
+}
+
+message PatentInfoRequest {
+  string patent_no = 1;
+}
+
+message PatentInfoResponse {
+  string patent_info = 1; // 或用结构化字段
+}
+
+message EnterpriseInterestRequest {
+  string patent_no = 1;
+}
+
+message EnterpriseInterestResponse {
+  string interest_level = 1;
+}
+
+service AgentService {
+  rpc Chat (AgentRequest) returns (AgentResponse);
+}
+
+message AgentRequest {
+  string query = 1;
+}
+
+message AgentResponse {
+  string answer = 1;
+}

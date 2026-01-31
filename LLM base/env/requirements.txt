@@ -1,0 +1,17 @@
+langchain
+langchain-text-splitters
+chromadb
+sentence-transformers
+rank_bm25
+requests
+openai
+qwen-agent
+grpcio
+grpcio-tools
+protobuf
+pypdf
+langchain-openai
+langchain
+fastmcp
+mcp
+openai
