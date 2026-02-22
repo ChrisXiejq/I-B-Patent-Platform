@@ -11,8 +11,7 @@ public class AgentServiceImpl implements AgentService {
     @Autowired
     private AgentGrpcClient agentGrpcClient;
     @Override
-    public String chat(String userQuery) {
-        String fullContext = userQuery;
-        return agentGrpcClient.chat(fullContext);
+    public String chat(String userQuery, String userId) {
+        return agentGrpcClient.chat(userQuery, userId);
     }
 }

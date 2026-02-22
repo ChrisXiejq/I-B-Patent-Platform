@@ -37,6 +37,8 @@ service AgentService {
 
 message AgentRequest {
   string query = 1;
+  string user_id = 2;   // 用户ID，用于多租户记忆区分
+  string session_id = 3;  // 可选会话ID
 }
 
 message AgentResponse {

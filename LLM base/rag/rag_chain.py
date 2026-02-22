@@ -1,9 +1,16 @@
 
 import os
-from langchain.vectorstores import Chroma
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.retrievers import BM25Retriever, EnsembleRetriever
-from langchain.chains import RetrievalQA
+# LangChain 0.2+ 将 vectorstores/embeddings/retrievers 迁移到 langchain_community
+# LangChain 新版本将模块迁移到 langchain_community，兼容多种版本
+try:
+    from langchain_community.vectorstores import Chroma
+    from langchain_community.embeddings import HuggingFaceEmbeddings
+    from langchain_community.retrievers import BM25Retriever
+except ImportError:
+    from langchain.vectorstores import Chroma
+    from langchain.embeddings import HuggingFaceEmbeddings
+    from langchain.retrievers import BM25Retriever
+
 from langchain_openai import OpenAI
 import requests
 from collections import defaultdict
@@ -60,30 +67,44 @@ def load_multi_chroma(persist_root="./chroma_db_multi"):
         dbs[tag] = Chroma(persist_directory=persist_dir, embedding_function=embeddings)
     return dbs
 
-# 2. 构建BE25混合检索器
+# 2. 构建 BM25+向量 混合检索器（使用 rrf_fusion，不依赖 EnsembleRetriever）
 
 def build_adaptive_retriever(multi_dbs, docs, query, top_k=5):
     """
-    自适应融合BM25和多表征向量检索。
-    可根据query类型动态调整权重或检索策略。
+    自适应融合 BM25 和多表征向量检索，使用 RRF 融合。
+    不依赖 EnsembleRetriever，兼容不同 LangChain 版本。
     """
     bm25_retriever = BM25Retriever.from_documents(docs)
     bm25_retriever.k = top_k
-    vector_retrievers = [db.as_retriever(search_kwargs={"k": top_k}) for db in multi_dbs.values()]
-    # 这里简单平均融合，可按需自适应调整
-    retriever = EnsembleRetriever(
-        retrievers=[bm25_retriever] + vector_retrievers,
-        weights=[0.3] + [0.7/len(vector_retrievers)]*len(vector_retrievers)
-    )
-    return retriever
+    retrievers = [bm25_retriever] + [db.as_retriever(search_kwargs={"k": top_k}) for db in multi_dbs.values()]
 
-# 3. 构建RAG链
+    class RRFEnsembleRetriever:
+        def get_relevant_documents(self, q):
+            results_lists = [r.get_relevant_documents(q) if hasattr(r, 'get_relevant_documents') else r.invoke(q) for r in retrievers]
+            return rrf_fusion(results_lists, k=60)
+
+    return RRFEnsembleRetriever()
+
+# 3. RAG 检索+生成（不依赖 RetrievalQA，兼容各版本 LangChain）
+
+def _custom_retrieve(multi_dbs, docs, query, top_k, rerank_top_n, cohere_api_key, use_cohere):
+    """多路检索：BM25 + 向量，RRF 融合，可选 Cohere 重排"""
+    results_lists = []
+    bm25 = BM25Retriever.from_documents(docs)
+    bm25.k = top_k
+    results_lists.append(bm25.get_relevant_documents(query))
+    for db in multi_dbs.values():
+        retr = db.as_retriever(search_kwargs={"k": top_k})
+        results_lists.append(retr.get_relevant_documents(query))
+    fused = rrf_fusion(results_lists, k=60)
+    return cohere_semantic_rerank(query, fused, cohere_api_key, top_n=rerank_top_n, use_cohere=use_cohere)
+
 
 def build_adaptive_rag_chain(qwen_api_base, qwen_api_key, cohere_api_key, persist_root="./chroma_db_multi", query="", top_k=5, rerank_top_n=5, use_cohere=False):
+    """构建 RAG 链（ manual 实现，无 RetrievalQA 依赖）"""
     multi_dbs = load_multi_chroma(persist_root)
     main_db = multi_dbs["bge-base-zh-v1.5"]
     docs = main_db.get()["documents"]
-    retriever = build_adaptive_retriever(multi_dbs, docs, query, top_k=top_k)
     llm = OpenAI(
         openai_api_base=qwen_api_base,
         openai_api_key=qwen_api_key,
@@ -91,50 +112,38 @@ def build_adaptive_rag_chain(qwen_api_base, qwen_api_key, cohere_api_key, persis
         temperature=0.2
     )
 
-    def custom_retrieve(query):
-        # 多路检索
-        results_lists = []
-        # BM25
-        bm25 = BM25Retriever.from_documents(docs)
-        bm25.k = top_k
-        results_lists.append(bm25.get_relevant_documents(query))
-        # 各向量表征
-        for db in multi_dbs.values():
-            retr = db.as_retriever(search_kwargs={"k": top_k})
-            results_lists.append(retr.get_relevant_documents(query))
-        # RRF融合去重
-        fused = rrf_fusion(results_lists, k=60)
-        # Cohere语义重排
-        reranked = cohere_semantic_rerank(query, fused, cohere_api_key, top_n=rerank_top_n, use_cohere=use_cohere)
-        return reranked
+    def run_rag(q: str):
+        retrieved = _custom_retrieve(multi_dbs, docs, q, top_k, rerank_top_n, cohere_api_key, use_cohere)
+        context = "\n\n".join(getattr(d, "page_content", str(d)) for d in retrieved)
+        prompt = f"""基于以下参考内容回答问题。如果参考内容中没有相关信息，请基于常识回答。
 
-    class AdaptiveRetriever:
-        def get_relevant_documents(self, query):
-            return custom_retrieve(query)
+参考内容：
+{context}
 
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        retriever=AdaptiveRetriever(),
-        return_source_documents=True
+问题：{q}
+
+请给出简洁准确的回答："""
+        return llm.invoke(prompt), retrieved
+
+    return run_rag
+
+
+def adaptive_rag_answer(query, qwen_api_base, qwen_api_key, cohere_api_key, top_k=5, rerank_top_n=5,
+                       use_cohere=False, persist_root="./chroma_db_multi"):
+    run_rag = build_adaptive_rag_chain(
+        qwen_api_base, qwen_api_key, cohere_api_key,
+        persist_root=persist_root, query=query, top_k=top_k, rerank_top_n=rerank_top_n, use_cohere=use_cohere
     )
-    return qa_chain
-
-# rag/rag_chain.py
-def adaptive_rag_answer(query, qwen_api_base, qwen_api_key, cohere_api_key, top_k=5, rerank_top_n=5):
-    chain = build_adaptive_rag_chain(
-        qwen_api_base, qwen_api_key, cohere_api_key, query=query, top_k=top_k, rerank_top_n=rerank_top_n
-    )
-    result = chain(query)
-    return result["result"]
+    ans, _ = run_rag(query)
+    return ans.content if hasattr(ans, "content") else str(ans)
 
 
 if __name__ == "__main__":
-    # Qwen-API兼容OpenAI接口
-    qwen_api_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"  # 你的Qwen OpenAI兼容API地址
-    qwen_api_key = "sk-b9dc7ac8811d4a10b9ee1f084005053c"
+    qwen_api_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    qwen_api_key = "sk-xxx"
     cohere_api_key = "your-cohere-api-key"
     query = "这个专利的潜在应用场景是什么？"
-    chain = build_adaptive_rag_chain(qwen_api_base, qwen_api_key, cohere_api_key, query=query)
-    result = chain(query)
-    print("答案：", result["result"])
-    print("检索片段：", [doc.page_content for doc in result["source_documents"]])
+    run_rag = build_adaptive_rag_chain(qwen_api_base, qwen_api_key, cohere_api_key, query=query)
+    ans, source_docs = run_rag(query)
+    print("答案：", ans.content if hasattr(ans, "content") else ans)
+    print("检索片段：", [getattr(d, "page_content", str(d)) for d in source_docs])

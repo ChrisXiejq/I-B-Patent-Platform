@@ -59,9 +59,17 @@ public class AgentController {
     @Autowired
     private AgentService agentService;
 
+    /**
+     * Agent 对话接口，支持多用户记忆区分
+     * @param query 用户查询
+     * @param userId 可选用户ID（用于分层记忆多租户，可从 JWT 解析）
+     */
     @PostMapping("/chat")
-    public Result chat(@RequestParam("query") String query) {
-        String answer = agentService.chat(query);
+    public Result chat(
+            @RequestParam("query") String query,
+            @RequestParam(value = "userId", required = false) String userId
+    ) {
+        String answer = agentService.chat(query, userId);
         return Result.success(answer);
     }
 

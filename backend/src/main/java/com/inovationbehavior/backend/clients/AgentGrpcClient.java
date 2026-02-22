@@ -14,10 +14,16 @@ public class AgentGrpcClient {
     private AgentServiceGrpc.AgentServiceBlockingStub agentStub;
 
     public String chat(String userQuery) {
+        return chat(userQuery, null);
+    }
 
-        AgentRequest request = AgentRequest.newBuilder()
-                .setQuery(userQuery)
-                .build();
+    public String chat(String userQuery, String userId) {
+
+        AgentRequest.Builder builder = AgentRequest.newBuilder().setQuery(userQuery);
+        if (userId != null && !userId.isEmpty()) {
+            builder.setUserId(userId);
+        }
+        AgentRequest request = builder.build();
 
         AgentResponse response;
         try {

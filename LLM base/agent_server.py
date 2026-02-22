@@ -37,12 +37,12 @@ class AgentRuntime:
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
-    def process(self, query: str, timeout: float = 60.0) -> str:
+    def process(self, query: str, user_id: str = "default_user", mode: str = "cot+react", timeout: float = 60.0) -> str:
         """
         线程安全地提交 coroutine 给 asyncio loop
         """
         fut = asyncio.run_coroutine_threadsafe(
-            self.agent.process_query(query),
+            self.agent.process_query(query, user_id=user_id, mode=mode),
             self.loop
         )
         return fut.result(timeout=timeout)
@@ -58,8 +58,9 @@ class AgentService(rag_pb2_grpc.AgentServiceServicer):
 
     def Chat(self, request, context):
         try:
-            # answer = self.runtime.process(request.query)
-            return rag_pb2.AgentResponse(answer="answer")
+            user_id = getattr(request, 'user_id', None) or ""
+            answer = self.runtime.process(request.query, user_id=user_id or "default_user")
+            return rag_pb2.AgentResponse(answer=answer)
 
         except Exception as e:
             import traceback

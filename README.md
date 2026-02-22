@@ -1,80 +1,138 @@
+# Patent Intelligence Transformation Agent Platform
 
-# RAG-Patent-Innovation-Behaviour 项目总览
+> Tongji University & Max Planck Institute Collaborative Project
 
-本项目是一个面向专利成果转化的智能平台，集成了前端可视化、SpringBoot中台服务、Agentic RAG智能模型层，支持专利检索、问答、企业画像、智能推理与多轮对话。
+A patent open platform integrating patent research, intelligent query, RAG knowledge enhancement, and Agent multi-turn reasoning. It serves enterprises, universities, and individuals with patent transformation services, addressing challenges such as high patent technology comprehension costs and difficult patent transfer decisions.
 
-## 目录结构
+---
 
-- `frontend/`  —— 前端 Vue3 + Vite 项目，用户交互与可视化
-- `backend/`   —— SpringBoot Java 中台，REST/gRPC服务、业务逻辑、与模型层对接
-- `LLM base/`  —— Python 智能模型层，RAG、Agent、gRPC服务、MCP工具等
-- `data exec/` —— 数据处理与分析脚本
-- `env/`       —— Python依赖环境
+## Tech Stack
 
-## 技术架构
+| Layer | Technologies |
+|-------|--------------|
+| **Frontend** | Vue 3, Vite, Element Plus, Vue Router, Pinia, i18n |
+| **Backend** | Spring Boot 3, RESTful API, gRPC, MySQL, Redis, JWT |
+| **Model Layer** | Python, LangChain, ChromaDB, Agentic RAG, MCP, FastMCP |
+| **LLM** | Qwen (Alibaba Cloud DashScope, OpenAI-compatible API) |
+
+---
+
+## Project Structure
 
 ```
-用户 <-> 前端(Vue3) <-> 中台(SpringBoot REST/gRPC) <-> 模型层(Python RAG/Agent) <-> 专利/企业/问卷/政策数据
+I-B-Patent-Platform/
+├── frontend/           # Vue 3 frontend
+├── backend/            # Spring Boot backend (REST + gRPC)
+├── LLM base/           # Python model layer
+│   ├── agent/          # Agent, memory, MCP Server
+│   ├── rag/            # RAG retrieval chain, vector DB build
+│   ├── agent_api.py    # FastAPI (standalone testing)
+│   ├── agent_server.py # gRPC service (backend integration)
+│   └── config.py       # Configuration
+├── .gitignore
+└── README.md
 ```
 
-### 前端
-- Vue3 + Vite + Element Plus
-- 多页面：专利检索、企业画像、问卷、新闻、团队等
-- 国际化支持（en/zh/de）
+---
 
-### 中台
-- SpringBoot，RESTful API + gRPC
-- 业务聚合、权限、与Python模型层对接
-- 支持Agent工具调用、专利/企业/问卷等多数据源
+## Prerequisites
 
-### 模型层（LLM base）
-- Python 3.9+
-- RAG（多表征向量检索+BM25+RRF+可选Cohere重排）
-- Agent（支持CoT、ReAct推理、MCP工具集成、记忆管理）
-- gRPC服务对接中台
-- 支持Qwen/OpenAI等大模型
+- **Node.js** 18+
+- **Java** 17+
+- **Python** 3.10+
+- **MySQL**, **Redis** (for backend)
+- **Qwen API Key** (Alibaba Cloud DashScope)
 
-## 快速启动
+---
 
-### 1. 前端
+## Quick Start
+
+### 1. Configure LLM Environment
+
+Create a `.env` file under `LLM base/`:
+
+```env
+# Required: Qwen API Key (Alibaba Cloud DashScope)
+QWEN_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_API_KEY=sk-your-qwen-api-key
+
+# Optional: Cohere semantic rerank
+COHERE_API_KEY=
+USE_COHERE_RERANK=false
+
+# Spring Boot backend URL (for MCP tool calls)
+BACKEND_BASE_URL=http://localhost:8190
+```
+
+### 2. Option A: Full Stack (Frontend + Backend + Model Layer)
+
 ```bash
+# 1. Start backend (configure MySQL, Redis first)
+cd backend
+mvn spring-boot:run
+# Port 8190
+
+# 2. Start model layer gRPC service
+cd "LLM base"
+pip install -r env/requirements.txt
+python agent_server.py
+# gRPC port 50052
+
+# 3. Start frontend
 cd frontend
 npm install
 npm run dev
-# 访问 http://localhost:5173
+# Open http://localhost:5173
 ```
 
-### 2. 中台
-```bash
-cd backend
-mvn spring-boot:run
-# 默认端口 8190，REST/gRPC接口见Controller
-```
+### 3. Option B: LLM/Agent Only (No Java Required)
 
-### 3. 模型层（LLM base）
 ```bash
 cd "LLM base"
-conda env create -f env/environment.yml
 pip install -r env/requirements.txt
-# 数据入库
-python rag/build_vector_db.py
-# 启动MCP Server
-python agent/mcp_server.py
-# 启动Agent Server
-python agent_server.py
+python agent_api.py
 ```
 
-## 主要功能
+After startup:
 
-- 专利/企业/问卷/政策多源数据融合检索
-- Agentic RAG：多表征+BM25混合检索+RRF融合+可选Cohere重排
-- 智能Agent：支持CoT/Plan/ReAct推理、工具自动调用、记忆管理
-- gRPC接口：中台与模型层高效通信
-- 多轮对话、用户画像、企业兴趣度分析
-- 可观测性：推理链、行动链、工具调用日志
+- **API docs**: http://localhost:8000/docs
+- **Health check**: `GET http://localhost:8000/health`
+- **Chat API**: `POST http://localhost:8000/chat` or `/chat/simple`
 
-## 进阶能力
+**Postman example**:
+```
+POST http://localhost:8000/chat/simple?query=hello&user_id=test&mode=react
+```
+Or JSON body:
+```json
+{"query": "What is my user identity?", "user_id": "111000", "mode": "cot+react"}
+```
 
-- 支持MCP协议，便于多Agent/多工具协作
-- 可扩展多模态（语音/图像）与多租户/多院区部署
-- 代码结构清晰，便于二次开发与定制
+---
+
+## Features
+
+- **Patent retrieval**: Vector + BM25 multi-retrieval, RRF fusion, optional Cohere rerank
+- **Agent reasoning**: CoT, ReAct, CoT+ReAct modes with tool auto-invocation
+- **MCP tools**: `get_identification`, `get_patent_analysis`, `get_enterprise_interest`, `get_rag_patent_info`
+- **Hierarchical memory**: Short-term cache + long-term vectorization (episodic/semantic), multi-user support
+- **gRPC**: Decoupled backend and Python model layer for independent iteration
+
+---
+
+## Build Vector DB (Optional)
+
+Build ChromaDB before using RAG:
+
+```bash
+cd "LLM base"
+python rag/build_vector_db.py
+```
+
+Output goes to `chroma_db_multi/`. Add to `.gitignore` if the directory is large.
+
+---
+
+## License
+
+This is a collaborative project. Please comply with the relevant agreements when using it.

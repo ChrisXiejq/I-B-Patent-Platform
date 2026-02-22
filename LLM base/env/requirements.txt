@@ -12,6 +12,11 @@ protobuf
 pypdf
 langchain-openai
 langchain
+langchain-community
 fastmcp
 mcp
 openai
+python-dotenv
+httpx
+fastapi
+uvicorn[standard]

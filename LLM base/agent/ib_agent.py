@@ -13,6 +13,13 @@ from agent.memory import memory_store
 
 load_dotenv()  # load environment variables from .env
 
+try:
+    from config import QWEN_API_KEY, QWEN_API_BASE
+except ImportError:
+    import os
+    QWEN_API_KEY = os.getenv("QWEN_API_KEY", "sk-b9dc7ac8811d4a10b9ee1f084005053c")
+    QWEN_API_BASE = os.getenv("QWEN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+
 
 class IBAgent:
     def __init__(self, user_id: str):
@@ -23,10 +30,10 @@ class IBAgent:
         self.session_id = f"session_{user_id}"
         self.mcp_session = None
 
-        # 替换为 Qwen (OpenAI-compatible) client
+        # 替换为 Qwen (OpenAI-compatible) client，从 .env/config 读取
         self.llm = OpenAI(
-            api_key="put your-qwen-api-key-here",
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+            api_key=QWEN_API_KEY or "put-your-qwen-api-key-here",
+            base_url=QWEN_API_BASE
         )
 
     async def connect_to_server(self, server_script_path: str):
@@ -74,7 +81,9 @@ class IBAgent:
             {"role": "system", "content": cot_prompt},
         ]
         for _, role, text in history:
-            cot_messages.append({"role": role, "content": text})
+            r = "assistant" if role == "agent" else role  # API 仅接受 assistant 而非 agent
+            if r in ("system", "assistant", "user"):
+                cot_messages.append({"role": r, "content": text})
         cot_messages.append({"role": "user", "content": query})
         cot_response = self.llm.chat.completions.create(
             model="qwen-plus",
@@ -107,7 +116,9 @@ class IBAgent:
             {"role": "system", "content": react_prompt},
         ]
         for _, role, text in history:
-            messages.append({"role": role, "content": text})
+            r = "assistant" if role == "agent" else role  # API 仅接受 assistant 而非 agent
+            if r in ("system", "assistant", "user"):
+                messages.append({"role": r, "content": text})
         messages.append({"role": "user", "content": query})
         max_steps = 3
         for step in range(max_steps):
@@ -139,13 +150,23 @@ class IBAgent:
         # 返回最终推理链
         return '\n'.join([m['content'] for m in messages if m['role'] == 'assistant'])
 
-    async def process_query(self, query: str, mode: str = "cot+react") -> str:
+    async def process_query(self, query: str, mode: str = "cot+react", user_id: str = None) -> str:
+        uid = user_id or self.user_id
+        session_id = f"session_{uid}"
         # 1. 记录用户输入到短期记忆
-        memory_store.add_short_term(self.session_id, 'user', query)
-        # 2. 获取短期记忆（对话历史）
-        history = memory_store.get_short_term(self.session_id)
-        # 3. 获取长期记忆（用户画像/业务数据）
-        profile = memory_store.get_long_term(self.user_id)
+        memory_store.add_short_term(session_id, 'user', query)
+        # 2. 通过标准化 API 获取分层记忆上下文
+        ctx = memory_store.get_context_for_agent(uid, session_id, query, short_term_limit=10, long_term_top_k=3)
+        history = ctx["history"]
+        profile = ctx["profile"]
+        relevant_memories = ctx["relevant_long_term"]
+        # 3. 将长期记忆拼接到 prompt
+        if relevant_memories:
+            history = list(history)  # 副本，避免污染
+            history.append((None, "system", f"长期记忆召回：{relevant_memories}"))
+        # 注入当前 user_id，供 LLM 调用工具时使用（如 get_identification(user_id)）
+        history = list(history)
+        history.append((None, "system", f"【会话上下文】当前用户 user_id={uid}，调用需要 user_id 的工具时请使用此值。"))
         # 4. 获取可用工具
         response = await self.session.list_tools()
         available_tools = [
@@ -159,22 +180,23 @@ class IBAgent:
             }
             for tool in response.tools
         ]
-        # 5. 串联CoT+ReAct
+        # 5. 串联CoT+ReAct（URL 中 + 会变为空格，需兼容）
+        mode = (mode or "").replace(" ", "+").lower()
         if mode == "cot+react":
             thoughts, plan = await self.cot_plan_and_reason(query, history, profile, available_tools)
             # 将plan作为目标，传递给ReAct
             react_intro = f"请根据以下行动计划逐步完成任务：{plan}"
             react_history = history + [(None, "system", react_intro)]
             react_trace = await self.react_reasoning(query, react_history, profile, available_tools)
-            memory_store.add_short_term(self.session_id, 'agent', f"[推理链]\n{thoughts}\n[计划]\n{plan}\n[ReAct]\n{react_trace}")
+            memory_store.add_short_term(session_id, 'agent', f"[推理链]\n{thoughts}\n[计划]\n{plan}\n[ReAct]\n{react_trace}")
             return f"[推理链]\n{thoughts}\n[计划]\n{plan}\n[ReAct]\n{react_trace}"
         elif mode == "cot":
             thoughts, plan = await self.cot_plan_and_reason(query, history, profile, available_tools)
-            memory_store.add_short_term(self.session_id, 'agent', f"[推理链]\n{thoughts}\n[计划]\n{plan}")
+            memory_store.add_short_term(session_id, 'agent', f"[推理链]\n{thoughts}\n[计划]\n{plan}")
             return f"[推理链]\n{thoughts}\n[计划]\n{plan}"
         elif mode == "react":
             react_trace = await self.react_reasoning(query, history, profile, available_tools)
-            memory_store.add_short_term(self.session_id, 'agent', f"[ReAct]\n{react_trace}")
+            memory_store.add_short_term(session_id, 'agent', f"[ReAct]\n{react_trace}")
             return f"[ReAct]\n{react_trace}"
         else:
             return "未知推理模式"
